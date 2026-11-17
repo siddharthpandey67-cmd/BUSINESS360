@@ -334,17 +334,46 @@ export default function Dashboard() {
       </html>
     `;
 
-    const win = window.open("", "_blank");
+    // Print inside a hidden iframe so no new browser tab opens.
+    const frame = document.createElement("iframe");
+    frame.style.position = "fixed";
+    frame.style.width = "1px";
+    frame.style.height = "1px";
+    frame.style.opacity = "0";
+    frame.style.pointerEvents = "none";
+    frame.style.border = "0";
 
-    if (!win) {
-      setNotice("Allow pop-ups in your browser to print invoices.");
+    document.body.appendChild(frame);
+
+    const frameWindow = frame.contentWindow;
+    const frameDocument = frame.contentDocument;
+
+    if (!frameWindow || !frameDocument) {
+      frame.remove();
+      setNotice("Unable to prepare invoice for printing.");
       return;
     }
 
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    win.print();
+    frame.onload = () => {
+      frameWindow.addEventListener(
+        "afterprint",
+        () => frame.remove(),
+        { once: true }
+      );
+
+      frameWindow.focus();
+      frameWindow.print();
+
+      window.setTimeout(() => {
+        if (frame.isConnected) {
+          frame.remove();
+        }
+      }, 60000);
+    };
+
+    frameDocument.open();
+    frameDocument.write(html);
+    frameDocument.close();
   }
 
   async function logout() {
