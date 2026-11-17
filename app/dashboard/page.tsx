@@ -4,7 +4,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { getSupabase } from "@/lib/supabase";
 
-type Org = { id: string; name: string };
+type Org = {
+  id: string;
+  name: string;
+};
 
 type Product = {
   id: string;
@@ -24,7 +27,7 @@ type Customer = {
 type Invoice = {
   id: string;
   invoice_number: string;
-  total_amount: number;
+  grand_total: number;
   status: string;
   created_at: string;
   customer_id: string | null;
@@ -43,23 +46,28 @@ export default function Dashboard() {
   const [notice, setNotice] = useState("Loading your workspace...");
   const [busy, setBusy] = useState(false);
 
-  // Product form
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [stock, setStock] = useState("");
 
-  // Customer form
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerEmail, setCustomerEmail] = useState("");
 
-  // Billing form
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [selectedProduct, setSelectedProduct] = useState("");
   const [quantity, setQuantity] = useState("1");
 
   async function load() {
-    const { data: { user } } = await sb.auth.getUser();
+    const {
+      data: { user },
+      error: authError
+    } = await sb.auth.getUser();
+
+    if (authError) {
+      setNotice(authError.message);
+      return;
+    }
 
     if (!user) {
       window.location.href = "/login";
@@ -99,23 +107,23 @@ export default function Dashboard() {
         .order("created_at", { ascending: false }),
 
       sb.from("invoices")
-        .select("id,invoice_number,total_amount,status,created_at,customer_id")
+        .select("id,invoice_number,grand_total,status,created_at,customer_id")
         .eq("organization_id", currentOrg.id)
         .order("created_at", { ascending: false })
     ]);
 
     if (p.error) {
-      setNotice(p.error.message);
+      setNotice("Products error: " + p.error.message);
       return;
     }
 
     if (c.error) {
-      setNotice("Customer loading error: " + c.error.message);
+      setNotice("Customers error: " + c.error.message);
       return;
     }
 
     if (i.error) {
-      setNotice("Invoice loading error: " + i.error.message);
+      setNotice("Invoices error: " + i.error.message);
       return;
     }
 
@@ -131,14 +139,20 @@ export default function Dashboard() {
 
   async function addProduct(e: FormEvent) {
     e.preventDefault();
+
     if (!org) return;
+
+    if (Number(price) < 0 || Number(stock) < 0) {
+      setNotice("Price and stock cannot be negative.");
+      return;
+    }
 
     setBusy(true);
     setNotice("");
 
     const { error } = await sb.from("products").insert({
       organization_id: org.id,
-      name,
+      name: name.trim(),
       selling_price: Number(price),
       stock_quantity: Number(stock)
     });
@@ -158,6 +172,7 @@ export default function Dashboard() {
 
   async function addCustomer(e: FormEvent) {
     e.preventDefault();
+
     if (!org) return;
 
     setBusy(true);
@@ -165,9 +180,9 @@ export default function Dashboard() {
 
     const { error } = await sb.from("customers").insert({
       organization_id: org.id,
-      name: customerName,
-      phone: customerPhone || null,
-      email: customerEmail || null
+      name: customerName.trim(),
+      phone: customerPhone.trim() || null,
+      email: customerEmail.trim() || null
     });
 
     if (error) {
@@ -191,8 +206,13 @@ export default function Dashboard() {
     const product = products.find(p => p.id === selectedProduct);
     const qty = Number(quantity);
 
-    if (!product || qty <= 0) {
-      setNotice("Please select a product and valid quantity.");
+    if (!product) {
+      setNotice("Please select a product.");
+      return;
+    }
+
+    if (!Number.isInteger(qty) || qty <= 0) {
+      setNotice("Enter a valid whole-number quantity.");
       return;
     }
 
@@ -201,26 +221,28 @@ export default function Dashboard() {
       return;
     }
 
-    setBusy(true);
-    setNotice("");
-
     const total = Number(product.selling_price) * qty;
     const invoiceNumber = "BI-" + Date.now();
 
-    const { data: invoice, error } = await sb
+    setBusy(true);
+    setNotice("");
+
+    const { data: invoice, error: invoiceError } = await sb
       .from("invoices")
       .insert({
         organization_id: org.id,
         customer_id: selectedCustomer || null,
         invoice_number: invoiceNumber,
-        total_amount: total,
+        subtotal: total,
+        tax_total: 0,
+        grand_total: total,
         status: "draft"
       })
       .select("id")
       .single();
 
-    if (error || !invoice) {
-      setNotice(error?.message || "Invoice could not be created.");
+    if (invoiceError || !invoice) {
+      setNotice(invoiceError?.message || "Invoice could not be created.");
       setBusy(false);
       return;
     }
@@ -237,11 +259,12 @@ export default function Dashboard() {
       });
 
     if (itemError) {
-      await sb.from("invoices")
-        .delete()
-        .eq("id", invoice.id);
-
-      setNotice(itemError.message);
+      setNotice(
+        "Invoice item could not be saved. Invoice ID: " +
+        invoice.id +
+        ". Error: " +
+        itemError.message
+      );
       setBusy(false);
       return;
     }
@@ -251,22 +274,25 @@ export default function Dashboard() {
       .update({ status: "issued" })
       .eq("id", invoice.id);
 
-    if (updateError) {
-      setNotice("Invoice saved, but status update failed: " + updateError.message);
-    } else {
-      setNotice("Invoice created successfully: " + invoiceNumber);
-    }
-
     setSelectedProduct("");
     setSelectedCustomer("");
     setQuantity("1");
 
     await load();
+
+    if (updateError) {
+      setNotice("Invoice created, but status update failed: " + updateError.message);
+    } else {
+      setNotice("Invoice created successfully: " + invoiceNumber);
+    }
+
     setBusy(false);
   }
 
   function printInvoice(invoice: Invoice) {
-    const customer = customers.find(c => c.id === invoice.customer_id);
+    const customer = customers.find(
+      c => c.id === invoice.customer_id
+    );
 
     const html = `
       <!DOCTYPE html>
@@ -274,10 +300,21 @@ export default function Dashboard() {
       <head>
         <title>Invoice ${invoice.invoice_number}</title>
         <style>
-          body { font-family: Arial; padding: 35px; color: #222; }
+          body {
+            font-family: Arial, sans-serif;
+            padding: 35px;
+            color: #222;
+          }
           h1 { color: #2563eb; }
-          .line { border-bottom: 1px solid #ddd; padding: 12px 0; }
-          .total { font-size: 22px; font-weight: bold; margin-top: 25px; }
+          .line {
+            border-bottom: 1px solid #ddd;
+            padding: 12px 0;
+          }
+          .total {
+            font-size: 22px;
+            font-weight: bold;
+            margin-top: 25px;
+          }
         </style>
       </head>
       <body>
@@ -285,9 +322,13 @@ export default function Dashboard() {
         <h2>INVOICE</h2>
         <p>Invoice: ${invoice.invoice_number}</p>
         <p>Date: ${new Date(invoice.created_at).toLocaleDateString("en-IN")}</p>
-        <div class="line">Customer: ${customer?.name || "Walk-in Customer"}</div>
+        <div class="line">
+          Customer: ${customer?.name || "Walk-in Customer"}
+        </div>
         <div class="line">Status: ${invoice.status}</div>
-        <div class="total">Total: ₹${Number(invoice.total_amount).toFixed(2)}</div>
+        <div class="total">
+          Total: ₹${Number(invoice.grand_total).toFixed(2)}
+        </div>
         <p>Thank you for your business!</p>
       </body>
       </html>
@@ -296,7 +337,7 @@ export default function Dashboard() {
     const win = window.open("", "_blank");
 
     if (!win) {
-      setNotice("Please allow pop-ups in your browser to print invoices.");
+      setNotice("Allow pop-ups in your browser to print invoices.");
       return;
     }
 
@@ -312,7 +353,7 @@ export default function Dashboard() {
   }
 
   const totalSales = invoices.reduce(
-    (sum, invoice) => sum + Number(invoice.total_amount || 0),
+    (sum, invoice) => sum + Number(invoice.grand_total || 0),
     0
   );
 
@@ -320,13 +361,19 @@ export default function Dashboard() {
     <main className="shell">
       <header className="topbar">
         <div>
-          <div className="brand">BUSINESS<span>360</span></div>
+          <div className="brand">
+            BUSINESS<span>360</span>
+          </div>
           <div className="tag">YOUR BUSINESS WORKSPACE</div>
         </div>
 
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <span className="muted" style={{ fontSize: 12 }}>{email}</span>
-          <button className="btn ghost" onClick={logout}>Logout</button>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {email}
+          </span>
+          <button className="btn ghost" onClick={logout}>
+            Logout
+          </button>
         </div>
       </header>
 
@@ -354,13 +401,18 @@ export default function Dashboard() {
 
         <section className="main">
           <div className="eyebrow">BUSINESS WORKSPACE</div>
-          <h1 className="h1">{org?.name || "Your dashboard"}</h1>
+
+          <h1 className="h1">
+            {org?.name || "Your dashboard"}
+          </h1>
 
           <p className="muted">
             Manage your business from one place.
           </p>
 
-          {notice && <div className="notice">{notice}</div>}
+          {notice && (
+            <div className="notice">{notice}</div>
+          )}
 
           {tab === "Overview" && (
             <>
@@ -382,16 +434,21 @@ export default function Dashboard() {
 
                 <div className="card">
                   <div className="muted">Total sales</div>
-                  <div className="metric">₹{totalSales.toFixed(2)}</div>
+                  <div className="metric">
+                    ₹{totalSales.toFixed(2)}
+                  </div>
                 </div>
               </div>
 
               <div className="card">
                 <h3>Welcome to BUSINESS360</h3>
                 <p className="muted">
-                  Manage products, customers and billing from your workspace.
+                  Manage products, customers and billing from one workspace.
                 </p>
-                <button className="btn" onClick={() => setTab("Products")}>
+                <button
+                  className="btn"
+                  onClick={() => setTab("Products")}
+                >
                   Add your first product
                 </button>
               </div>
@@ -402,7 +459,9 @@ export default function Dashboard() {
             <>
               <div className="section">
                 <h2>Products & inventory</h2>
-                <span className="pill">{products.length} products</span>
+                <span className="pill">
+                  {products.length} products
+                </span>
               </div>
 
               <form className="card" onSubmit={addProduct}>
@@ -411,25 +470,41 @@ export default function Dashboard() {
                 <div className="two">
                   <div>
                     <label>Product name</label>
-                    <input className="field" required value={name}
+                    <input
+                      className="field"
+                      required
+                      value={name}
                       onChange={e => setName(e.target.value)}
-                      placeholder="Product name" />
+                      placeholder="Product name"
+                    />
                   </div>
 
                   <div>
                     <label>Selling price (₹)</label>
-                    <input className="field" required type="number"
-                      min="0" step="0.01" value={price}
+                    <input
+                      className="field"
+                      required
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={price}
                       onChange={e => setPrice(e.target.value)}
-                      placeholder="0.00" />
+                      placeholder="0.00"
+                    />
                   </div>
 
                   <div>
                     <label>Opening stock</label>
-                    <input className="field" required type="number"
-                      min="0" step="0.001" value={stock}
+                    <input
+                      className="field"
+                      required
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={stock}
                       onChange={e => setStock(e.target.value)}
-                      placeholder="0" />
+                      placeholder="0"
+                    />
                   </div>
                 </div>
 
@@ -438,7 +513,9 @@ export default function Dashboard() {
                 </button>
               </form>
 
-              <div className="section"><h3>Product list</h3></div>
+              <div className="section">
+                <h3>Product list</h3>
+              </div>
 
               <div className="tablewrap">
                 <table>
@@ -450,12 +527,15 @@ export default function Dashboard() {
                       <th>Stock</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {products.map(p => (
                       <tr key={p.id}>
                         <td>{p.name}</td>
                         <td>{p.sku || "—"}</td>
-                        <td>₹{Number(p.selling_price).toFixed(2)}</td>
+                        <td>
+                          ₹{Number(p.selling_price).toFixed(2)}
+                        </td>
                         <td>{p.stock_quantity}</td>
                       </tr>
                     ))}
@@ -463,7 +543,9 @@ export default function Dashboard() {
                 </table>
 
                 {!products.length && (
-                  <div className="empty">No products yet.</div>
+                  <div className="empty">
+                    No products yet. Add your first product.
+                  </div>
                 )}
               </div>
             </>
@@ -473,7 +555,9 @@ export default function Dashboard() {
             <>
               <div className="section">
                 <h2>Customer management</h2>
-                <span className="pill">{customers.length} customers</span>
+                <span className="pill">
+                  {customers.length} customers
+                </span>
               </div>
 
               <form className="card" onSubmit={addCustomer}>
@@ -482,23 +566,34 @@ export default function Dashboard() {
                 <div className="two">
                   <div>
                     <label>Customer name</label>
-                    <input className="field" required value={customerName}
+                    <input
+                      className="field"
+                      required
+                      value={customerName}
                       onChange={e => setCustomerName(e.target.value)}
-                      placeholder="Customer name" />
+                      placeholder="Customer name"
+                    />
                   </div>
 
                   <div>
                     <label>Phone number</label>
-                    <input className="field" value={customerPhone}
+                    <input
+                      className="field"
+                      value={customerPhone}
                       onChange={e => setCustomerPhone(e.target.value)}
-                      placeholder="Phone number" />
+                      placeholder="Phone number"
+                    />
                   </div>
 
                   <div>
                     <label>Email</label>
-                    <input className="field" type="email" value={customerEmail}
+                    <input
+                      className="field"
+                      type="email"
+                      value={customerEmail}
                       onChange={e => setCustomerEmail(e.target.value)}
-                      placeholder="Email address" />
+                      placeholder="Email address"
+                    />
                   </div>
                 </div>
 
@@ -507,7 +602,9 @@ export default function Dashboard() {
                 </button>
               </form>
 
-              <div className="section"><h3>Customer list</h3></div>
+              <div className="section">
+                <h3>Customer list</h3>
+              </div>
 
               <div className="tablewrap">
                 <table>
@@ -518,6 +615,7 @@ export default function Dashboard() {
                       <th>Email</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {customers.map(c => (
                       <tr key={c.id}>
@@ -530,7 +628,9 @@ export default function Dashboard() {
                 </table>
 
                 {!customers.length && (
-                  <div className="empty">No customers added yet.</div>
+                  <div className="empty">
+                    No customers added yet.
+                  </div>
                 )}
               </div>
             </>
@@ -548,20 +648,31 @@ export default function Dashboard() {
                 <div className="two">
                   <div>
                     <label>Select customer</label>
-                    <select className="field" value={selectedCustomer}
-                      onChange={e => setSelectedCustomer(e.target.value)}>
+                    <select
+                      className="field"
+                      value={selectedCustomer}
+                      onChange={e => setSelectedCustomer(e.target.value)}
+                    >
                       <option value="">Walk-in customer</option>
+
                       {customers.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
                       ))}
                     </select>
                   </div>
 
                   <div>
                     <label>Select product</label>
-                    <select className="field" required value={selectedProduct}
-                      onChange={e => setSelectedProduct(e.target.value)}>
+                    <select
+                      className="field"
+                      required
+                      value={selectedProduct}
+                      onChange={e => setSelectedProduct(e.target.value)}
+                    >
                       <option value="">Choose product</option>
+
                       {products.map(p => (
                         <option key={p.id} value={p.id}>
                           {p.name} — ₹{p.selling_price}
@@ -572,29 +683,43 @@ export default function Dashboard() {
 
                   <div>
                     <label>Quantity</label>
-                    <input className="field" type="number" min="1"
-                      required value={quantity}
-                      onChange={e => setQuantity(e.target.value)} />
+                    <input
+                      className="field"
+                      type="number"
+                      min="1"
+                      step="1"
+                      required
+                      value={quantity}
+                      onChange={e => setQuantity(e.target.value)}
+                    />
                   </div>
                 </div>
 
                 {selectedProduct && (
                   <p className="muted">
-                    Total: ₹{(
-                      Number(products.find(p => p.id === selectedProduct)?.selling_price || 0)
-                      * Number(quantity || 0)
+                    Total: ₹
+                    {(
+                      Number(
+                        products.find(p => p.id === selectedProduct)
+                          ?.selling_price || 0
+                      ) * Number(quantity || 0)
                     ).toFixed(2)}
                   </p>
                 )}
 
-                <button className="btn" disabled={busy || !products.length}>
+                <button
+                  className="btn"
+                  disabled={busy || !products.length}
+                >
                   {busy ? "Creating..." : "Create invoice"}
                 </button>
               </form>
 
               <div className="section">
                 <h3>Sales history</h3>
-                <span className="pill">{invoices.length} invoices</span>
+                <span className="pill">
+                  {invoices.length} invoices
+                </span>
               </div>
 
               <div className="tablewrap">
@@ -608,16 +733,23 @@ export default function Dashboard() {
                       <th>Action</th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {invoices.map(inv => (
                       <tr key={inv.id}>
                         <td>{inv.invoice_number}</td>
-                        <td>{new Date(inv.created_at).toLocaleDateString("en-IN")}</td>
-                        <td>₹{Number(inv.total_amount).toFixed(2)}</td>
+                        <td>
+                          {new Date(inv.created_at).toLocaleDateString("en-IN")}
+                        </td>
+                        <td>
+                          ₹{Number(inv.grand_total).toFixed(2)}
+                        </td>
                         <td>{inv.status}</td>
                         <td>
-                          <button className="btn ghost"
-                            onClick={() => printInvoice(inv)}>
+                          <button
+                            className="btn ghost"
+                            onClick={() => printInvoice(inv)}
+                          >
                             Print / PDF
                           </button>
                         </td>
@@ -627,7 +759,9 @@ export default function Dashboard() {
                 </table>
 
                 {!invoices.length && (
-                  <div className="empty">No invoices created yet.</div>
+                  <div className="empty">
+                    No invoices created yet.
+                  </div>
                 )}
               </div>
             </>
@@ -637,8 +771,9 @@ export default function Dashboard() {
             <div className="card">
               <h2>Inventory</h2>
               <p className="muted">
-                Current stock levels are shown below.
+                Current stock levels.
               </p>
+
               {products.map(p => (
                 <p key={p.id}>
                   {p.name}: {p.stock_quantity} units
@@ -651,7 +786,7 @@ export default function Dashboard() {
             <div className="card">
               <h2>Expenses</h2>
               <p className="muted">
-                Expense tracking will be added in a later update.
+                Expense tracking is not active yet.
               </p>
             </div>
           )}
@@ -670,7 +805,7 @@ export default function Dashboard() {
             <div className="card">
               <h2>Team & settings</h2>
               <p className="muted">
-                Team management and workspace settings will be added later.
+                Team management is not active yet.
               </p>
             </div>
           )}
