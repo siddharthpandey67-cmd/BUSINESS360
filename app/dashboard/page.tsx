@@ -51,6 +51,7 @@ export default function Dashboard() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
 
   const [tab, setTab] = useState("Overview");
   const [notice, setNotice] = useState("Loading your workspace...");
@@ -226,6 +227,120 @@ export default function Dashboard() {
       setCustomerEmail("");
       await load();
       setNotice("Customer added successfully.");
+    }
+
+    setBusy(false);
+  }
+
+  function startEditExpense(expense: Expense) {
+    setEditingExpenseId(expense.id);
+    setExpenseCategory(expense.category || "Other");
+    setExpenseDescription(expense.description);
+    setExpenseAmount(String(expense.amount));
+    setExpenseDate(expense.expense_date);
+    setNotice("Editing expense. Update the fields and save changes.");
+  }
+
+  function cancelEditExpense() {
+    setEditingExpenseId(null);
+    setExpenseCategory("Other");
+    setExpenseDescription("");
+    setExpenseAmount("");
+
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+
+    setExpenseDate(`${year}-${month}-${day}`);
+    setNotice("");
+  }
+
+  async function updateExpense(e: FormEvent) {
+    e.preventDefault();
+
+    if (!org || !editingExpenseId) return;
+
+    const amountValue = Number(expenseAmount);
+
+    if (!expenseDescription.trim()) {
+      setNotice("Please enter an expense description.");
+      return;
+    }
+
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      setNotice("Please enter a valid expense amount.");
+      return;
+    }
+
+    if (!expenseDate) {
+      setNotice("Please select an expense date.");
+      return;
+    }
+
+    setBusy(true);
+    setNotice("");
+
+    const { error } = await sb
+      .from("expenses")
+      .update({
+        category: expenseCategory,
+        description: expenseDescription.trim(),
+        amount: amountValue,
+        expense_date: expenseDate
+      })
+      .eq("id", editingExpenseId)
+      .eq("organization_id", org.id);
+
+    if (error) {
+      setNotice("Could not update expense: " + error.message);
+    } else {
+      setEditingExpenseId(null);
+      setExpenseCategory("Other");
+      setExpenseDescription("");
+      setExpenseAmount("");
+
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, "0");
+      const day = String(today.getDate()).padStart(2, "0");
+
+      setExpenseDate(`${year}-${month}-${day}`);
+
+      await load();
+      setNotice("Expense updated successfully.");
+    }
+
+    setBusy(false);
+  }
+
+  async function deleteExpense(expense: Expense) {
+    if (!org) return;
+
+    const confirmed = window.confirm(
+      `Delete this expense?\n\n${expense.description} — ₹${Number(expense.amount).toFixed(2)}`
+    );
+
+    if (!confirmed) return;
+
+    setBusy(true);
+    setNotice("");
+
+    const { error } = await sb
+      .from("expenses")
+      .delete()
+      .eq("id", expense.id)
+      .eq("organization_id", org.id);
+
+    if (error) {
+      setNotice("Could not delete expense: " + error.message);
+    } else {
+      if (editingExpenseId === expense.id) {
+        cancelEditExpense();
+      }
+
+      await load();
+      setNotice("Expense deleted successfully.");
     }
 
     setBusy(false);
@@ -421,7 +536,6 @@ export default function Dashboard() {
       </html>
     `;
 
-    // Print inside a hidden iframe so no new browser tab opens.
     const frame = document.createElement("iframe");
     frame.style.position = "fixed";
     frame.style.width = "1px";
@@ -478,7 +592,10 @@ export default function Dashboard() {
     0
   );
 
+  const estimatedBalance = totalSales - totalExpenses;
+
   const now = new Date();
+
   const currentMonth =
     `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
@@ -930,8 +1047,13 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <form className="card" onSubmit={addExpense}>
-                <h3>Add new expense</h3>
+              <form
+                className="card"
+                onSubmit={editingExpenseId ? updateExpense : addExpense}
+              >
+                <h3>
+                  {editingExpenseId ? "Edit expense" : "Add new expense"}
+                </h3>
 
                 <div className="two">
                   <div>
@@ -991,9 +1113,26 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                <button className="btn" disabled={busy}>
-                  {busy ? "Saving..." : "Save expense"}
-                </button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button className="btn" disabled={busy}>
+                    {busy
+                      ? "Please wait..."
+                      : editingExpenseId
+                        ? "Update expense"
+                        : "Save expense"}
+                  </button>
+
+                  {editingExpenseId && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={cancelEditExpense}
+                      disabled={busy}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </form>
 
               <div className="section">
@@ -1008,6 +1147,7 @@ export default function Dashboard() {
                       <th>Category</th>
                       <th>Description</th>
                       <th>Amount</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
 
@@ -1022,6 +1162,27 @@ export default function Dashboard() {
                         <td>{expense.category}</td>
                         <td>{expense.description}</td>
                         <td>₹{Number(expense.amount).toFixed(2)}</td>
+                        <td>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              onClick={() => startEditExpense(expense)}
+                              disabled={busy}
+                            >
+                              Edit
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              onClick={() => deleteExpense(expense)}
+                              disabled={busy}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1038,11 +1199,27 @@ export default function Dashboard() {
 
           {tab === "Reports" && (
             <div className="card">
-              <h2>Reports</h2>
+              <h2>Business Reports</h2>
+
               <p>Total invoices: {invoices.length}</p>
               <p>Total sales: ₹{totalSales.toFixed(2)}</p>
+              <p>Total expenses: ₹{totalExpenses.toFixed(2)}</p>
+
+              <div className="section">
+                <h3>Estimated balance after recorded expenses</h3>
+                <div className="metric">
+                  ₹{estimatedBalance.toFixed(2)}
+                </div>
+              </div>
+
               <p>Total products: {products.length}</p>
               <p>Total customers: {customers.length}</p>
+
+              <p className="muted">
+                Note: This is a simple estimate (sales minus entered expenses).
+                It is not accounting net profit because product purchase costs,
+                taxes and other adjustments may not be included.
+              </p>
             </div>
           )}
 
