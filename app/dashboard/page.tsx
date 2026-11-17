@@ -33,6 +33,15 @@ type Invoice = {
   customer_id: string | null;
 };
 
+type Expense = {
+  id: string;
+  category: string;
+  description: string;
+  amount: number;
+  expense_date: string;
+  created_at: string;
+};
+
 export default function Dashboard() {
   const sb = getSupabase();
 
@@ -41,6 +50,7 @@ export default function Dashboard() {
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
 
   const [tab, setTab] = useState("Overview");
   const [notice, setNotice] = useState("Loading your workspace...");
@@ -57,6 +67,18 @@ export default function Dashboard() {
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [selectedProduct, setSelectedProduct] = useState("");
   const [quantity, setQuantity] = useState("1");
+
+  const [expenseCategory, setExpenseCategory] = useState("Other");
+  const [expenseDescription, setExpenseDescription] = useState("");
+  const [expenseAmount, setExpenseAmount] = useState("");
+
+  const [expenseDate, setExpenseDate] = useState(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  });
 
   async function load() {
     const {
@@ -95,7 +117,7 @@ export default function Dashboard() {
     const currentOrg = orgs[0] as Org;
     setOrg(currentOrg);
 
-    const [p, c, i] = await Promise.all([
+    const [p, c, i, ex] = await Promise.all([
       sb.from("products")
         .select("id,name,sku,selling_price,stock_quantity")
         .eq("organization_id", currentOrg.id)
@@ -109,7 +131,12 @@ export default function Dashboard() {
       sb.from("invoices")
         .select("id,invoice_number,grand_total,status,created_at,customer_id")
         .eq("organization_id", currentOrg.id)
-        .order("created_at", { ascending: false })
+        .order("created_at", { ascending: false }),
+
+      sb.from("expenses")
+        .select("id,category,description,amount,expense_date,created_at")
+        .eq("organization_id", currentOrg.id)
+        .order("expense_date", { ascending: false })
     ]);
 
     if (p.error) {
@@ -127,9 +154,15 @@ export default function Dashboard() {
       return;
     }
 
+    if (ex.error) {
+      setNotice("Expenses error: " + ex.error.message);
+      return;
+    }
+
     setProducts((p.data || []) as Product[]);
     setCustomers((c.data || []) as Customer[]);
     setInvoices((i.data || []) as Invoice[]);
+    setExpenses((ex.data || []) as Expense[]);
     setNotice("");
   }
 
@@ -193,6 +226,60 @@ export default function Dashboard() {
       setCustomerEmail("");
       await load();
       setNotice("Customer added successfully.");
+    }
+
+    setBusy(false);
+  }
+
+  async function addExpense(e: FormEvent) {
+    e.preventDefault();
+
+    if (!org) return;
+
+    const amountValue = Number(expenseAmount);
+
+    if (!expenseDescription.trim()) {
+      setNotice("Please enter an expense description.");
+      return;
+    }
+
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      setNotice("Please enter a valid expense amount.");
+      return;
+    }
+
+    if (!expenseDate) {
+      setNotice("Please select an expense date.");
+      return;
+    }
+
+    setBusy(true);
+    setNotice("");
+
+    const { error } = await sb.from("expenses").insert({
+      organization_id: org.id,
+      category: expenseCategory,
+      description: expenseDescription.trim(),
+      amount: amountValue,
+      expense_date: expenseDate
+    });
+
+    if (error) {
+      setNotice("Could not save expense: " + error.message);
+    } else {
+      setExpenseCategory("Other");
+      setExpenseDescription("");
+      setExpenseAmount("");
+
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, "0");
+      const day = String(today.getDate()).padStart(2, "0");
+
+      setExpenseDate(`${year}-${month}-${day}`);
+
+      await load();
+      setNotice("Expense saved successfully.");
     }
 
     setBusy(false);
@@ -385,6 +472,19 @@ export default function Dashboard() {
     (sum, invoice) => sum + Number(invoice.grand_total || 0),
     0
   );
+
+  const totalExpenses = expenses.reduce(
+    (sum, expense) => sum + Number(expense.amount || 0),
+    0
+  );
+
+  const now = new Date();
+  const currentMonth =
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  const monthlyExpenses = expenses
+    .filter(expense => expense.expense_date?.slice(0, 7) === currentMonth)
+    .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
 
   return (
     <main className="shell">
@@ -812,12 +912,128 @@ export default function Dashboard() {
           )}
 
           {tab === "Expenses" && (
-            <div className="card">
-              <h2>Expenses</h2>
-              <p className="muted">
-                Expense tracking is not active yet.
-              </p>
-            </div>
+            <>
+              <div className="section">
+                <h2>Expense management</h2>
+                <span className="pill">{expenses.length} records</span>
+              </div>
+
+              <div className="grid">
+                <div className="card">
+                  <div className="muted">Total expenses</div>
+                  <div className="metric">₹{totalExpenses.toFixed(2)}</div>
+                </div>
+
+                <div className="card">
+                  <div className="muted">This month's expenses</div>
+                  <div className="metric">₹{monthlyExpenses.toFixed(2)}</div>
+                </div>
+              </div>
+
+              <form className="card" onSubmit={addExpense}>
+                <h3>Add new expense</h3>
+
+                <div className="two">
+                  <div>
+                    <label>Expense category</label>
+                    <select
+                      className="field"
+                      value={expenseCategory}
+                      onChange={e => setExpenseCategory(e.target.value)}
+                    >
+                      <option value="Rent">Rent</option>
+                      <option value="Electricity">Electricity</option>
+                      <option value="Salary">Salary</option>
+                      <option value="Transport">Transport</option>
+                      <option value="Internet">Internet</option>
+                      <option value="Purchases">Purchases</option>
+                      <option value="Maintenance">Maintenance</option>
+                      <option value="Marketing">Marketing</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label>Amount (₹)</label>
+                    <input
+                      className="field"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      required
+                      value={expenseAmount}
+                      onChange={e => setExpenseAmount(e.target.value)}
+                      placeholder="Enter amount"
+                    />
+                  </div>
+
+                  <div>
+                    <label>Expense date</label>
+                    <input
+                      className="field"
+                      type="date"
+                      required
+                      value={expenseDate}
+                      onChange={e => setExpenseDate(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label>Description</label>
+                    <input
+                      className="field"
+                      required
+                      maxLength={250}
+                      value={expenseDescription}
+                      onChange={e => setExpenseDescription(e.target.value)}
+                      placeholder="e.g. Shop electricity bill"
+                    />
+                  </div>
+                </div>
+
+                <button className="btn" disabled={busy}>
+                  {busy ? "Saving..." : "Save expense"}
+                </button>
+              </form>
+
+              <div className="section">
+                <h3>Expense history</h3>
+              </div>
+
+              <div className="tablewrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Category</th>
+                      <th>Description</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {expenses.map(expense => (
+                      <tr key={expense.id}>
+                        <td>
+                          {new Date(
+                            `${expense.expense_date}T00:00:00`
+                          ).toLocaleDateString("en-IN")}
+                        </td>
+                        <td>{expense.category}</td>
+                        <td>{expense.description}</td>
+                        <td>₹{Number(expense.amount).toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {!expenses.length && (
+                  <div className="empty">
+                    No expenses recorded yet. Add your first expense above.
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {tab === "Reports" && (
