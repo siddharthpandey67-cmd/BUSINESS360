@@ -1223,14 +1223,6 @@ export default function Dashboard() {
             </div>
           )}
 
-          {tab === "Team & settings" && (
-            <div className="card">
-              <h2>Team & settings</h2>
-              <p className="muted">
-                Team management is not active yet.
-              </p>
-            </div>
-          )}
         </section>
       </div>
     </main>
