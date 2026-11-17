@@ -1,9 +1,129 @@
- "use client";
+
+"use client";
+
 import Link from "next/link";
-import {useState} from "react";
-import {getSupabase} from "@/lib/supabase";
-export default function Signup(){
- const [name,setName]=useState("");const [business,setBusiness]=useState("");const [email,setEmail]=useState("");const [password,setPassword]=useState("");const [msg,setMsg]=useState("");const [busy,setBusy]=useState(false);
- async function submit(e:React.FormEvent){e.preventDefault();setBusy(true);setMsg("");try{const sb=getSupabase();const {data,error}=await sb.auth.signUp({email,password,options:{data:{full_name:name}}});if(error)throw error;if(!data.user)throw new Error("Account could not be created.");if(!data.session){setMsg("Account created. Check your email to confirm, then log in and create your business.");return;}const {error:orgErr}=await sb.from("organizations").insert({name:business,owner_id:data.user.id}).select().single();if(orgErr)throw orgErr;window.location.href="/dashboard"}catch(x){setMsg(x instanceof Error?x.message:"Signup failed")}finally{setBusy(false)}}
- return <main className="authwrap"><form className="card auth" onSubmit={submit}><Link href="/" className="brand">BUSINESS<span>360</span></Link><h1 style={{fontFamily:"Manrope"}}>Create your workspace</h1><p className="muted">Your shop. Your decisions. You manage your business.</p><label>Your name</label><input className="field" required value={name} onChange={e=>setName(e.target.value)} placeholder="Full name"/><label>Business name</label><input className="field" required value={business} onChange={e=>setBusiness(e.target.value)} placeholder="e.g. Sharma General Store"/><label>Email</label><input className="field" type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/><label>Password (minimum 8 characters)</label><input className="field" type="password" minLength={8} required value={password} onChange={e=>setPassword(e.target.value)} placeholder="Create a strong password"/>{msg&&<div className="notice">{msg}</div>}<button className="btn" style={{width:"100%"}} disabled={busy}>{busy?"Creating...":"Create free account"}</button><p className="muted">Already registered? <Link href="/login">Login</Link></p></form></main>
+import { useState } from "react";
+import { getSupabase } from "@/lib/supabase";
+
+export default function Signup() {
+  const [name, setName] = useState("");
+  const [business, setBusiness] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setMsg("");
+
+    try {
+      const sb = getSupabase();
+
+      const { data, error } = await sb.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: name.trim(),
+            business_name: business.trim(),
+          },
+        },
+      });
+
+      if (error) throw error;
+
+      if (!data.user) {
+        throw new Error("Account could not be created.");
+      }
+
+      if (!data.session) {
+        setMsg(
+          "Account created! Please check your email and confirm your account. Your business workspace will be created automatically."
+        );
+        return;
+      }
+
+      window.location.href = "/dashboard";
+
+    } catch (x) {
+      setMsg(
+        x instanceof Error ? x.message : "Signup failed. Please try again."
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="authwrap">
+      <form className="card auth" onSubmit={submit}>
+        <Link href="/" className="brand">
+          BUSINESS<span>360</span>
+        </Link>
+
+        <h1 style={{ fontFamily: "Manrope" }}>
+          Create your workspace
+        </h1>
+
+        <p className="muted">
+          Your shop. Your decisions. You manage your business.
+        </p>
+
+        <label>Your name</label>
+        <input
+          className="field"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Full name"
+        />
+
+        <label>Business name</label>
+        <input
+          className="field"
+          required
+          value={business}
+          onChange={(e) => setBusiness(e.target.value)}
+          placeholder="e.g. Sharma General Store"
+        />
+
+        <label>Email</label>
+        <input
+          className="field"
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@example.com"
+        />
+
+        <label>Password (minimum 8 characters)</label>
+        <input
+          className="field"
+          type="password"
+          minLength={8}
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Create a strong password"
+        />
+
+        {msg && <div className="notice">{msg}</div>}
+
+        <button
+          className="btn"
+          style={{ width: "100%" }}
+          disabled={busy}
+        >
+          {busy ? "Creating..." : "Create free account"}
+        </button>
+
+        <p className="muted">
+          Already registered? <Link href="/login">Login</Link>
+        </p>
+      </form>
+    </main>
+  );
 }
